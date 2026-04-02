@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Global resets */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body, #wpab-root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+
+/* Prose styles for markdown in AI messages */
+.prose-sm p { margin: 0.25rem 0; }
+.prose-sm ul, .prose-sm ol { margin: 0.5rem 0; padding-left: 1.25rem; }
+.prose-sm li { margin: 0.1rem 0; }
+.prose-sm code {
+  background: #f3f4f6;
+  border-radius: 3px;
+  padding: 0.1em 0.3em;
+  font-size: 0.85em;
+}
+.prose-sm strong { font-weight: 600; }
