@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type {
   AppMode,
+  EditIntent,
   Message,
   Plan,
   PlanStatus,
@@ -29,8 +30,14 @@ interface AppState {
   // Current session
   currentPageId: number | null;
   previewUrl: string | null;
-  setCurrentPage: (postId: number, previewUrl: string) => void;
+  currentHtml: string;           // ← the live HTML of the current page
+  setCurrentPage: (postId: number, previewUrl: string, html?: string) => void;
   setPreviewUrl: (url: string) => void;
+  setCurrentHtml: (html: string) => void;
+
+  // Edit intent (set by server during streaming)
+  editIntent: EditIntent | null;
+  setEditIntent: (intent: EditIntent) => void;
 
   // Chat messages
   messages: Message[];
@@ -80,9 +87,15 @@ export const useAppStore = create<AppState>((set) => ({
   // Current session
   currentPageId: null,
   previewUrl: null,
-  setCurrentPage: (postId, previewUrl) =>
-    set({ currentPageId: postId, previewUrl }),
+  currentHtml: '',
+  setCurrentPage: (postId, previewUrl, html = '') =>
+    set({ currentPageId: postId, previewUrl, currentHtml: html }),
   setPreviewUrl: (url) => set({ previewUrl: url }),
+  setCurrentHtml: (html) => set({ currentHtml: html }),
+
+  // Edit intent
+  editIntent: null,
+  setEditIntent: (editIntent) => set({ editIntent }),
 
   // Messages
   messages: [],

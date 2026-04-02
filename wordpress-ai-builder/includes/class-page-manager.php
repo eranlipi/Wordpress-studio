@@ -32,6 +32,25 @@ class WPAB_Page_Manager {
     }
 
     /**
+     * Extract the raw HTML from a page's `<!-- wp:html -->` block.
+     * Returns an empty string if the page is empty or doesn't exist.
+     */
+    public function get_raw_html( int $post_id ): string {
+        $post = get_post( $post_id );
+        if ( ! $post ) {
+            return '';
+        }
+
+        $content = $post->post_content;
+
+        // Strip the Gutenberg block comment wrappers we add
+        $content = preg_replace( '/^<!-- wp:html -->\s*/i', '', $content );
+        $content = preg_replace( '/\s*<!-- \/wp:html -->$/i', '', $content );
+
+        return trim( $content );
+    }
+
+    /**
      * Update page HTML content (wrapped in a raw HTML block).
      *
      * @return array{ post_id: int, preview_url: string }|WP_Error

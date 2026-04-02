@@ -44,7 +44,7 @@ class WPAB_REST_Controller {
 
         // Single page operations
         register_rest_route( $ns, '/pages/(?P<id>\d+)', [
-            [ 'methods' => WP_REST_Server::EDITABLE, 'callback' => [ $this, 'update_page' ],   'permission_callback' => $auth ],
+            [ 'methods' => WP_REST_Server::EDITABLE, 'callback' => [ $this, 'update_page' ], 'permission_callback' => $auth ],
         ] );
 
         register_rest_route( $ns, '/pages/(?P<id>\d+)/publish', [
@@ -63,6 +63,13 @@ class WPAB_REST_Controller {
         register_rest_route( $ns, '/generate', [
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => [ $this, 'generate' ],
+            'permission_callback' => $auth,
+        ] );
+
+        // Auto title suggestion for a new page
+        register_rest_route( $ns, '/title', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [ $this, 'suggest_title' ],
             'permission_callback' => $auth,
         ] );
 
@@ -159,7 +166,6 @@ class WPAB_REST_Controller {
             return new WP_Error( 'missing_html', 'HTML content is required.', [ 'status' => 400 ] );
         }
 
-        // Allow all HTML since this is admin-only; sanitize for XSS
         $clean_html = wp_kses_post( $html );
         $result     = $this->page_manager->update_content( $post_id, $clean_html );
 
@@ -194,6 +200,28 @@ class WPAB_REST_Controller {
     }
 
     // -------------------------------------------------------------------------
+    // Auto title suggestion
+    // -------------------------------------------------------------------------
+
+    public function suggest_title( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+        $params = $request->get_json_params() ?? [];
+        $prompt = sanitize_textarea_field( $params['prompt'] ?? '' );
+
+        if ( empty( $prompt ) ) {
+            return new WP_Error( 'missing_prompt', 'Prompt is required.', [ 'status' => 400 ] );
+        }
+
+        $title = $this->ai_proxy->generate( $prompt, 'title' );
+
+        if ( is_wp_error( $title ) ) {
+            // Non-critical — return a fallback instead of erroring
+            return rest_ensure_response( [ 'title' => 'AI Builder Page' ] );
+        }
+
+        return rest_ensure_response( [ 'title' => sanitize_text_field( trim( $title ) ) ] );
+    }
+
+    // -------------------------------------------------------------------------
     // AI Generation (non-streaming)
     // -------------------------------------------------------------------------
 
@@ -207,7 +235,18 @@ class WPAB_REST_Controller {
             return new WP_Error( 'missing_prompt', 'Prompt is required.', [ 'status' => 400 ] );
         }
 
-        $html = $this->ai_proxy->generate( $prompt, 'build', $history );
+        // Fetch current HTML for context-aware editing
+        $current_html = $post_id > 0 ? $this->page_manager->get_raw_html( $post_id ) : '';
+
+        // Detect intent
+        $intent = $this->ai_proxy->detect_intent( $prompt, ! empty( $current_html ) );
+
+        // Full rebuild: clear context so the CREATE prompt is used
+        if ( $intent === WPAB_AI_Proxy::INTENT_FULL_REBUILD ) {
+            $current_html = '';
+        }
+
+        $html = $this->ai_proxy->generate( $prompt, 'build', $history, $current_html );
 
         if ( is_wp_error( $html ) ) {
             return $html;
@@ -215,7 +254,6 @@ class WPAB_REST_Controller {
 
         $clean_html = wp_kses_post( $html );
 
-        // If post_id provided, update that page; otherwise create new
         if ( $post_id > 0 ) {
             $result = $this->page_manager->update_content( $post_id, $clean_html );
         } else {
@@ -230,7 +268,10 @@ class WPAB_REST_Controller {
             return $result;
         }
 
-        return rest_ensure_response( array_merge( $result, [ 'html' => $clean_html ] ) );
+        return rest_ensure_response( array_merge( $result, [
+            'html'   => $clean_html,
+            'intent' => $intent,
+        ] ) );
     }
 
     // -------------------------------------------------------------------------
@@ -251,17 +292,14 @@ class WPAB_REST_Controller {
             return $raw;
         }
 
-        // Strip markdown code blocks if AI wrapped the JSON
         $json_str = preg_replace( '/^```(?:json)?\s*/m', '', trim( $raw ) );
         $json_str = preg_replace( '/```\s*$/m', '', $json_str );
-
-        $plan = json_decode( trim( $json_str ), true );
+        $plan     = json_decode( trim( $json_str ), true );
 
         if ( json_last_error() !== JSON_ERROR_NONE || empty( $plan['steps'] ) ) {
             return new WP_Error( 'invalid_plan', 'AI returned invalid plan JSON. Response: ' . substr( $raw, 0, 200 ), [ 'status' => 502 ] );
         }
 
-        // Sanitize plan
         $plan['title']       = sanitize_text_field( $plan['title'] ?? 'Page Plan' );
         $plan['description'] = sanitize_textarea_field( $plan['description'] ?? '' );
         $plan['steps']       = array_map( function ( $step ) {
@@ -285,7 +323,6 @@ class WPAB_REST_Controller {
             return new WP_Error( 'missing_plan', 'Plan is required.', [ 'status' => 400 ] );
         }
 
-        // Create a new page if none provided
         if ( $post_id === 0 ) {
             $page_result = $this->page_manager->create_draft( $plan['title'] ?? 'AI Builder Page' );
             if ( is_wp_error( $page_result ) ) {
@@ -295,14 +332,14 @@ class WPAB_REST_Controller {
             $this->page_manager->mark_as_generated( $post_id );
         }
 
-        // Build the full page by executing all plan steps
         $full_prompt = "Build a complete webpage with these sections:\n";
         foreach ( $plan['steps'] as $step ) {
             $full_prompt .= "- {$step['type']}: {$step['title']} — {$step['description']}\n";
         }
         $full_prompt .= "\nPage title: " . ( $plan['title'] ?? 'Page' );
 
-        $html = $this->ai_proxy->generate( $full_prompt, 'build' );
+        // For plan execution, always create fresh (no current HTML context)
+        $html = $this->ai_proxy->generate( $full_prompt, 'build', [], '' );
 
         if ( is_wp_error( $html ) ) {
             return $html;
@@ -322,6 +359,7 @@ class WPAB_REST_Controller {
         return rest_ensure_response( array_merge( $result, [
             'html'    => $clean_html,
             'post_id' => $post_id,
+            'intent'  => WPAB_AI_Proxy::INTENT_CREATE,
         ] ) );
     }
 
@@ -344,18 +382,17 @@ class WPAB_REST_Controller {
             exit;
         }
 
-        $streamer->progress( 'Thinking...' );
-
-        $result = $this->ai_proxy->generate( $prompt, $mode, $history );
-
-        if ( is_wp_error( $result ) ) {
-            $streamer->error( $result->get_error_message(), $result->get_error_code() );
-            exit;
-        }
+        $streamer->progress( 'Analyzing request...' );
 
         if ( $mode === 'plan' ) {
-            // Parse and return plan
-            $json_str = preg_replace( '/^```(?:json)?\s*/m', '', trim( $result ) );
+            $raw = $this->ai_proxy->generate( $prompt, 'plan', $history );
+
+            if ( is_wp_error( $raw ) ) {
+                $streamer->error( $raw->get_error_message(), $raw->get_error_code() );
+                exit;
+            }
+
+            $json_str = preg_replace( '/^```(?:json)?\s*/m', '', trim( $raw ) );
             $json_str = preg_replace( '/```\s*$/m', '', $json_str );
             $plan     = json_decode( trim( $json_str ), true );
 
@@ -368,8 +405,37 @@ class WPAB_REST_Controller {
             exit;
         }
 
-        // Build mode: update the page
-        $streamer->progress( 'Generating page...' );
+        // Build mode — detect intent and fetch current HTML for context
+        $current_html = $post_id > 0 ? $this->page_manager->get_raw_html( $post_id ) : '';
+        $intent       = $this->ai_proxy->detect_intent( $prompt, ! empty( $current_html ) );
+
+        // Full rebuild: clear context
+        if ( $intent === WPAB_AI_Proxy::INTENT_FULL_REBUILD ) {
+            $current_html = '';
+        }
+
+        // Send intent to frontend immediately so UI can update
+        $streamer->send( 'intent', [ 'intent' => $intent ] );
+
+        // Map intent to a friendly status message
+        $status_messages = [
+            WPAB_AI_Proxy::INTENT_CREATE       => 'Building your page...',
+            WPAB_AI_Proxy::INTENT_FULL_REBUILD => 'Rebuilding page from scratch...',
+            WPAB_AI_Proxy::INTENT_EDIT_STYLE   => 'Updating styles...',
+            WPAB_AI_Proxy::INTENT_EDIT_SECTION => 'Editing section...',
+            WPAB_AI_Proxy::INTENT_ADD_SECTION  => 'Adding new section...',
+            WPAB_AI_Proxy::INTENT_FIX          => 'Fixing issue...',
+        ];
+        $streamer->progress( $status_messages[ $intent ] ?? 'Generating...' );
+
+        $result = $this->ai_proxy->generate( $prompt, 'build', $history, $current_html );
+
+        if ( is_wp_error( $result ) ) {
+            $streamer->error( $result->get_error_message(), $result->get_error_code() );
+            exit;
+        }
+
+        $streamer->progress( 'Saving page...' );
         $clean_html = wp_kses_post( $result );
 
         if ( $post_id > 0 ) {
@@ -393,6 +459,7 @@ class WPAB_REST_Controller {
             'html'        => $clean_html,
             'post_id'     => $page_result['post_id'],
             'preview_url' => $page_result['preview_url'],
+            'intent'      => $intent,
         ] );
         exit;
     }

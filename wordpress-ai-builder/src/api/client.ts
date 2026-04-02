@@ -101,6 +101,11 @@ export const executePlan = (
     body: JSON.stringify({ plan, post_id: postId }),
   });
 
+// ─── Title suggestion ─────────────────────────────────────────────────────────
+
+export const suggestTitle = (prompt: string): Promise<{ title: string }> =>
+  apiFetch('/title', { method: 'POST', body: JSON.stringify({ prompt }) });
+
 // ─── SSE Streaming ────────────────────────────────────────────────────────────
 
 export function streamGenerate(
@@ -108,7 +113,9 @@ export function streamGenerate(
   postId: number,
   mode: 'build' | 'plan',
   history: Array<{ role: string; content: string }>,
+  currentHtml: string,
   onProgress: (msg: string) => void,
+  onIntent: (intent: string) => void,
   onDone: (data: Record<string, unknown>) => void,
   onError: (msg: string) => void
 ): () => void {
@@ -122,7 +129,7 @@ export function streamGenerate(
       'Content-Type': 'application/json',
       'X-WP-Nonce': _config.nonce,
     },
-    body: JSON.stringify({ prompt, post_id: postId, mode, history }),
+    body: JSON.stringify({ prompt, post_id: postId, mode, history, current_html: currentHtml }),
   })
     .then(async (res) => {
       if (!res.ok || !res.body) {
@@ -153,6 +160,8 @@ export function streamGenerate(
               const data = JSON.parse(rawData);
               if (currentEvent === 'progress') {
                 onProgress(data.message ?? '');
+              } else if (currentEvent === 'intent') {
+                onIntent(data.intent ?? '');
               } else if (currentEvent === 'done') {
                 onDone(data);
               } else if (currentEvent === 'error') {
@@ -172,6 +181,5 @@ export function streamGenerate(
       }
     });
 
-  // Return cleanup function
   return () => controller.abort();
 }

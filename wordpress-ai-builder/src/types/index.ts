@@ -89,6 +89,16 @@ export type AppMode = 'build' | 'planning';
 
 export type PlanStatus = 'idle' | 'pending_approval' | 'executing' | 'done';
 
+// ─── Edit Intent ───────────────────────────────────────────────────────────────
+
+export type EditIntent =
+  | 'create'
+  | 'full_rebuild'
+  | 'edit_style'
+  | 'edit_section'
+  | 'add_section'
+  | 'fix';
+
 // ─── SSE Events ───────────────────────────────────────────────────────────────
 
 export interface SSEProgressEvent {
@@ -102,6 +112,11 @@ export interface SSEDoneBuildEvent {
   html: string;
   post_id: number;
   preview_url: string;
+  intent: EditIntent;
+}
+
+export interface SSEIntentEvent {
+  intent: EditIntent;
 }
 
 export interface SSEDonePlanEvent {

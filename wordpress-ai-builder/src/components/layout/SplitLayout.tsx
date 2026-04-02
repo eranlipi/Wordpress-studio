@@ -3,13 +3,13 @@ import { ChatPanel } from '../chat/ChatPanel';
 import { PreviewPanel } from '../preview/PreviewPanel';
 import { SettingsModal } from '../settings/SettingsModal';
 import { useAppStore } from '../../store/appStore';
-import { listPages, createPage } from '../../api/client';
+import { listPages, createPage, getPreviewUrl } from '../../api/client';
 import type { WPPage } from '../../types';
 
 function PagesSidebar() {
   const {
     pages, setPages, currentPageId,
-    setCurrentPage, addMessage, upsertPage,
+    setCurrentPage, setCurrentHtml, addMessage, upsertPage,
     settings, setSettingsOpen,
   } = useAppStore();
 
@@ -52,7 +52,9 @@ function PagesSidebar() {
   };
 
   const handleSelectPage = (page: WPPage) => {
-    setCurrentPage(page.post_id, page.preview_url);
+    // Clear currentHtml when switching pages so AI starts fresh with that page's context
+    setCurrentHtml('');
+    setCurrentPage(page.post_id, page.preview_url, '');
     addMessage('system', `Switched to: ${page.title}`);
   };
 
